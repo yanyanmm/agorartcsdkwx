@@ -4,14 +4,16 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
 import android.os.Build;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.widget.Toast;
 
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
 import com.taobao.weex.WXSDKInstance;
 import com.taobao.weex.annotation.JSMethod;
+import com.taobao.weex.bridge.JSCallback;
 import com.taobao.weex.ui.action.BasicComponentData;
 import com.taobao.weex.ui.component.WXComponent;
 import com.taobao.weex.ui.component.WXComponentProp;
@@ -19,10 +21,15 @@ import com.taobao.weex.ui.component.WXVContainer;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class AgoraRtcRoomComponent extends WXComponent<AgoraRtcRoomLayout> {
 
     private static final int PERMISSION_REQ_ID = 32;
+
+    private static final String Event_OnInit   = "onInit";
+
+    private JSCallback mJsCallback = null;
 
     public AgoraRtcRoomComponent(WXSDKInstance instance, WXVContainer parent, BasicComponentData basicComponentData) {
         super(instance, parent, basicComponentData);
@@ -32,13 +39,39 @@ public class AgoraRtcRoomComponent extends WXComponent<AgoraRtcRoomLayout> {
     public AgoraRtcRoomLayout initComponentHostView(@NonNull Context context) {
         AgoraRtcRoomLayout roomLayout = new AgoraRtcRoomLayout(context);
         roomLayout.setLayoutParams(new AgoraRtcRoomLayout.LayoutParams(-1, -1));
-        //roomLayout.init(getActivity(), "1e0441cfe0674fb3920180e2646e91ee");
+        roomLayout.addEventListener(new OnEventListener() {
+            @Override
+            public void onEvent(String event, Map<String, Object> params) {
+                if (mJsCallback != null) {
+                    JSONObject data = new JSONObject();
+                    data.put("type", event);
+                    data.put("data", params);
+                    mJsCallback.invokeAndKeepAlive(data);
+                } else {
+                    fireEvent(event, params);
+                }
+            }
+        });
         return roomLayout;
     }
 
     @WXComponentProp(name = "appid")
     public void setAppid(String appid) {
-        getHostView().init(getActivity(), appid);
+        if (getHostView().init(getActivity(), appid)) {
+            fireEvent(Event_OnInit);
+        }
+    }
+
+    @WXComponentProp(name = "linkVideoFrame")
+    public void setLinkVideoFrame(String linkVideoFrame) {
+        JSONArray array = JSONArray.parseArray(linkVideoFrame);
+        if (array != null && array.size() == 4) {
+            int right = array.getIntValue(0);
+            int bottom = array.getIntValue(1);
+            int width = array.getIntValue(2);
+            int height = array.getIntValue(3);
+            getHostView().setVideoFrame(right, bottom, width, height);
+        }
     }
 
     private boolean checkPermission() {
@@ -65,23 +98,40 @@ public class AgoraRtcRoomComponent extends WXComponent<AgoraRtcRoomLayout> {
     }
 
     @Override
-    public void onActivityCreate() {
-        super.onActivityCreate();
-
-        //检查权限
-        checkPermission();
-    }
-
-    @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == PERMISSION_REQ_ID) {
-            for (int ret : grantResults) {
-                if (PackageManager.PERMISSION_GRANTED != ret) {
-                    showToast("用户没有允许需要的权限，使用可能会受到限制！");
+            if (grantResults != null && grantResults.length > 0) {
+                for (int ret : grantResults) {
+                    if (PackageManager.PERMISSION_GRANTED != ret) {
+                        showToast("用户没有允许需要的权限，使用可能会受到限制！");
+                    }
                 }
             }
         }
+    }
+
+    @JSMethod
+    public void checkPermission(JSCallback jsCallback) {
+        boolean ret = checkPermission();
+        if (jsCallback != null) {
+            jsCallback.invoke(ret ? "1" : "0");
+        }
+    }
+
+    @JSMethod
+    public void setJsCallback(JSCallback jsCallback) {
+        mJsCallback = jsCallback;
+    }
+
+    @JSMethod
+    public void startPreview() {
+        getHostView().startPreview();
+    }
+
+    @JSMethod
+    public void stopPreview() {
+        getHostView().stopPreview();
     }
 
     @JSMethod
@@ -91,10 +141,7 @@ public class AgoraRtcRoomComponent extends WXComponent<AgoraRtcRoomLayout> {
 
     @JSMethod
     public void startBroadcast() {
-        //检查权限
-        if (checkPermission()) {
-            getHostView().startBroadcast();
-        }
+        getHostView().startBroadcast();
     }
 
     @JSMethod
@@ -105,6 +152,11 @@ public class AgoraRtcRoomComponent extends WXComponent<AgoraRtcRoomLayout> {
     @JSMethod
     public void leaveChannel() {
         getHostView().leaveChannel();
+    }
+
+    @JSMethod
+    public void setUserLinkVideoFrame(int uid, int right, int bottom, int width, int height) {
+        getHostView().setVideoFrame(uid, right, bottom, width, height);
     }
 
     @JSMethod
@@ -150,6 +202,10 @@ public class AgoraRtcRoomComponent extends WXComponent<AgoraRtcRoomLayout> {
     @Override
     public void onActivityDestroy() {
         super.onActivityDestroy();
+        if (mJsCallback != null) {
+            mJsCallback.invoke(0);
+            mJsCallback = null;
+        }
         getHostView().leaveChannel();
         getHostView().destory();
     }

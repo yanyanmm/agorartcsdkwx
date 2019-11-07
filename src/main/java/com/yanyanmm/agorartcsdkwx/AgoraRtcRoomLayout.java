@@ -3,11 +3,15 @@ package com.yanyanmm.agorartcsdkwx;
 import android.app.Activity;
 import android.content.Context;
 import android.util.AttributeSet;
-import android.util.Log;
 import android.view.SurfaceView;
 import android.widget.RelativeLayout;
 
+import com.alibaba.fastjson.JSONObject;
+
 import java.lang.ref.WeakReference;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import io.agora.rtc.Constants;
 import io.agora.rtc.IRtcEngineEventHandler;
@@ -22,9 +26,11 @@ public class AgoraRtcRoomLayout extends RelativeLayout {
 
     private RtcEngine mRtcEngine = null;
 
+    private OnEventListener mEventListener = null;
+
     private WeakReference<Activity> mActivity = null;
 
-    private VideoGridContainer mVideoGridContainer = null;
+    private AgoraRtcRoomVideoContainer mVideoContainer = null;
 
     public AgoraRtcRoomLayout(Context context) {
         this(context, null);
@@ -37,9 +43,36 @@ public class AgoraRtcRoomLayout extends RelativeLayout {
     public AgoraRtcRoomLayout(Context context, AttributeSet attrs, int defStyleAttr) {
         super(context, attrs, defStyleAttr);
 
-        mVideoGridContainer = new VideoGridContainer(context);
-        mVideoGridContainer.setLayoutParams(new LayoutParams(-1, -1));
-        this.addView(mVideoGridContainer);
+        mVideoContainer = new AgoraRtcRoomVideoContainer(context);
+        mVideoContainer.setLayoutParams(new LayoutParams(-1, -1));
+        this.addView(mVideoContainer);
+    }
+
+    public void addEventListener(OnEventListener eventListener) {
+        this.mEventListener = eventListener;
+    }
+
+    /**
+     * 设置视频默认大小
+     * @param right
+     * @param bottom
+     * @param width
+     * @param height
+     */
+    public void setVideoFrame(int right, int bottom, int width, int height) {
+        mVideoContainer.setVideoFrame(right, bottom, width, height);
+    }
+
+    /**
+     * 设置某个主播视频大小
+     * @param uid
+     * @param right
+     * @param bottom
+     * @param width
+     * @param height
+     */
+    public void setVideoFrame(int uid, int right, int bottom, int width, int height) {
+        mVideoContainer.setVideoFrame(uid, right, bottom, width, height);
     }
 
     /**
@@ -47,20 +80,42 @@ public class AgoraRtcRoomLayout extends RelativeLayout {
      * @param activity
      * @param appid
      */
-    public void init(Activity activity, String appid) {
-        mActivity = new WeakReference<>(activity);
-        try {
-            mRtcEngine = RtcEngine.create(getContext(), appid, mRtcEventHandler);
-            mRtcEngine.setChannelProfile(Constants.CHANNEL_PROFILE_LIVE_BROADCASTING);
-            mRtcEngine.enableVideo();
-            mRtcEngine.setVideoEncoderConfiguration(new VideoEncoderConfiguration(
-                    new VideoEncoderConfiguration.VideoDimensions(),
-                    VideoEncoderConfiguration.FRAME_RATE.FRAME_RATE_FPS_15,
-                    VideoEncoderConfiguration.STANDARD_BITRATE,
-                    VideoEncoderConfiguration.ORIENTATION_MODE.ORIENTATION_MODE_FIXED_PORTRAIT
-            ));
-        } catch (Exception e) {
-            e.printStackTrace();
+    public boolean init(Activity activity, String appid) {
+        if (mRtcEngine == null) {
+            mActivity = new WeakReference<>(activity);
+            try {
+                mRtcEngine = RtcEngine.create(getContext(), appid, mRtcEventHandler);
+                mRtcEngine.setChannelProfile(Constants.CHANNEL_PROFILE_LIVE_BROADCASTING);
+                mRtcEngine.enableVideo();
+                mRtcEngine.setVideoEncoderConfiguration(new VideoEncoderConfiguration(
+                        new VideoEncoderConfiguration.VideoDimensions(),
+                        VideoEncoderConfiguration.FRAME_RATE.FRAME_RATE_FPS_15,
+                        VideoEncoderConfiguration.STANDARD_BITRATE,
+                        VideoEncoderConfiguration.ORIENTATION_MODE.ORIENTATION_MODE_FIXED_PORTRAIT
+                ));
+                return true;
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 在进入频道前启动本地视频预览
+     */
+    public void startPreview() {
+        if (mRtcEngine != null) {
+            mRtcEngine.startPreview();
+        }
+    }
+
+    /**
+     * 停止视频预览
+     */
+    public void stopPreview() {
+        if (mRtcEngine != null) {
+            mRtcEngine.stopPreview();
         }
     }
 
@@ -96,6 +151,14 @@ public class AgoraRtcRoomLayout extends RelativeLayout {
      */
     public void leaveChannel() {
         if (mRtcEngine != null) {
+            List<Integer> uids = mVideoContainer.getUids();
+            if (uids != null && uids.size() > 0) {
+                for (int i = 0; i < uids.size(); i++) {
+                    int uid = uids.get(i);
+                    this.stopRtcVideo(uid);
+                }
+                mVideoContainer.clearAllVideo();
+            }
             mRtcEngine.leaveChannel();
         }
     }
@@ -195,8 +258,7 @@ public class AgoraRtcRoomLayout extends RelativeLayout {
     public void startBroadcast() {
         if (mRtcEngine != null) {
             mRtcEngine.setClientRole(Constants.CLIENT_ROLE_BROADCASTER);
-            SurfaceView surface = prepareRtcVideo(0, true);
-            mVideoGridContainer.addUserVideoSurface(0, surface, true);
+            openRtcVideo(0);
         }
     }
 
@@ -206,8 +268,7 @@ public class AgoraRtcRoomLayout extends RelativeLayout {
     public void stopBroadcast() {
         if (mRtcEngine != null) {
             mRtcEngine.setClientRole(Constants.CLIENT_ROLE_AUDIENCE);
-            removeRtcVideo(0, true);
-            mVideoGridContainer.removeUserVideo(0, true);
+            stopRtcVideo(0);
         }
     }
 
@@ -225,47 +286,56 @@ public class AgoraRtcRoomLayout extends RelativeLayout {
         destory();
     }
 
-    protected SurfaceView prepareRtcVideo(int uid, boolean local) {
+    protected void openRtcVideo(int uid) {
         SurfaceView surface = RtcEngine.CreateRendererView(getContext());
-        if (local) {
+        if (uid == 0) {
             mRtcEngine.setupLocalVideo(new VideoCanvas(surface, VideoCanvas.RENDER_MODE_HIDDEN, 0));
         } else {
             mRtcEngine.setupRemoteVideo(new VideoCanvas(surface, VideoCanvas.RENDER_MODE_HIDDEN, uid));
         }
-        return surface;
+        mVideoContainer.addVideoSurface(surface, uid);
     }
 
-    protected void removeRtcVideo(int uid, boolean local) {
-        if (local) {
+    protected void stopRtcVideo(int uid) {
+        if (uid == 0) {
             mRtcEngine.setupLocalVideo(null);
         } else {
             mRtcEngine.setupRemoteVideo(new VideoCanvas(null, VideoCanvas.RENDER_MODE_HIDDEN, uid));
         }
+        mVideoContainer.removeVideoSurface(uid);
     }
 
     private final IRtcEngineEventHandler mRtcEventHandler = new IRtcEngineEventHandler() {
         @Override
         // 注册 onJoinChannelSuccess 回调。
         // 本地用户成功加入频道时，会触发该回调。
-        public void onJoinChannelSuccess(String channel, final int uid, int elapsed) {
+        public void onJoinChannelSuccess(final String channel, final int uid, final int elapsed) {
             if (mActivity != null && mActivity.get() != null) {
                 mActivity.get().runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        Log.i(TAG, "Join channel success, uid: " + (uid & 0xFFFFFFFFL));
+                        if (mEventListener != null) {
+                            Map<String, Object> params = new HashMap<>();
+                            params.put("channel", channel);
+                            params.put("uid", uid);
+                            params.put("elapsed", elapsed);
+                            mEventListener.onEvent("onJoinChannelSuccess", params);
+                        }
                     }
                 });
             }
         }
 
         @Override
-        public void onLeaveChannel(IRtcEngineEventHandler.RtcStats stats) {
+        public void onLeaveChannel(final IRtcEngineEventHandler.RtcStats stats) {
             if (mActivity != null && mActivity.get() != null) {
                 mActivity.get().runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        Log.i(TAG, "onLeaveChannel ");
-                        mVideoGridContainer.clearAllVideo();
+                        if (mEventListener != null) {
+                            Map params = JSONObject.parseObject(JSONObject.toJSONString(stats), Map.class);
+                            mEventListener.onEvent("onLeaveChannel", params);
+                        }
                     }
                 });
             }
@@ -274,19 +344,25 @@ public class AgoraRtcRoomLayout extends RelativeLayout {
         @Override
         // SDK 接收到第一帧远端视频并成功解码时，会触发该回调。
         // 可以在该回调中调用 setupRemoteVideo 方法设置远端视图。
-        public void onRemoteVideoStateChanged(final int uid, final int state, int reason, int elapsed) {
+        public void onRemoteVideoStateChanged(final int uid, final int state, final int reason, final int elapsed) {
             if (mActivity != null && mActivity.get() != null) {
                 mActivity.get().runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
                         if (state == Constants.REMOTE_VIDEO_STATE_STARTING) {
                             //设置远程视图
-                            SurfaceView surface = prepareRtcVideo(uid, false);
-                            mVideoGridContainer.addUserVideoSurface(uid, surface, false);
+                            openRtcVideo(uid);
                         } else if (state == Constants.REMOTE_VIDEO_STATE_STOPPED) {
                             //移除远端视图
-                            removeRtcVideo(uid, false);
-                            mVideoGridContainer.removeUserVideo(uid, false);
+                            stopRtcVideo(uid);
+                        }
+                        if (mEventListener != null) {
+                            Map<String, Object> params = new HashMap<>();
+                            params.put("state", state);
+                            params.put("uid", uid);
+                            params.put("reason", reason);
+                            params.put("elapsed", elapsed);
+                            mEventListener.onEvent("onRemoteVideoStateChanged", params);
                         }
                     }
                 });
@@ -294,12 +370,17 @@ public class AgoraRtcRoomLayout extends RelativeLayout {
         }
 
         @Override
-        public void onUserJoined(int uid, int elapsed) {
+        public void onUserJoined(final int uid, final int elapsed) {
             if (mActivity != null && mActivity.get() != null) {
                 mActivity.get().runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        Log.i(TAG, "onUserJoined ");
+                        if (mEventListener != null) {
+                            Map<String, Object> params = new HashMap<>();
+                            params.put("uid", uid);
+                            params.put("elapsed", elapsed);
+                            mEventListener.onEvent("onUserJoined", params);
+                        }
                     }
                 });
             }
@@ -308,13 +389,19 @@ public class AgoraRtcRoomLayout extends RelativeLayout {
         @Override
         // 注册 onUserOffline 回调。
         // 远端主播离开频道或掉线时，会触发该回调。
-        public void onUserOffline(final int uid, int reason) {
+        public void onUserOffline(final int uid, final int reason) {
             if (mActivity != null && mActivity.get() != null) {
                 mActivity.get().runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        removeRtcVideo(uid, false);
-                        mVideoGridContainer.removeUserVideo(uid, false);
+                        //移除远端视图
+                        stopRtcVideo(uid);
+                        if (mEventListener != null) {
+                            Map<String, Object> params = new HashMap<>();
+                            params.put("uid", uid);
+                            params.put("reason", reason);
+                            mEventListener.onEvent("onUserOffline", params);
+                        }
                     }
                 });
             }

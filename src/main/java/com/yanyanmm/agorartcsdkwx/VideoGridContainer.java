@@ -162,4 +162,7 @@ public class VideoGridContainer extends RelativeLayout {
         mUidList.clear();
     }
 
+    public List<Integer> getUidList() {
+        return mUidList;
+    }
 }
