@@ -9,7 +9,6 @@ import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.widget.Toast;
 
-import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import com.taobao.weex.WXSDKInstance;
 import com.taobao.weex.annotation.JSMethod;
@@ -62,18 +61,6 @@ public class AgoraRtcRoomComponent extends WXComponent<AgoraRtcRoomLayout> {
         }
     }
 
-    @WXComponentProp(name = "linkVideoFrame")
-    public void setLinkVideoFrame(String linkVideoFrame) {
-        JSONArray array = JSONArray.parseArray(linkVideoFrame);
-        if (array != null && array.size() == 4) {
-            int right = array.getIntValue(0);
-            int bottom = array.getIntValue(1);
-            int width = array.getIntValue(2);
-            int height = array.getIntValue(3);
-            getHostView().setVideoFrame(right, bottom, width, height);
-        }
-    }
-
     private boolean checkPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Activity activity = getActivity();
@@ -112,14 +99,6 @@ public class AgoraRtcRoomComponent extends WXComponent<AgoraRtcRoomLayout> {
     }
 
     @JSMethod
-    public void checkPermission(JSCallback jsCallback) {
-        boolean ret = checkPermission();
-        if (jsCallback != null) {
-            jsCallback.invoke(ret ? "1" : "0");
-        }
-    }
-
-    @JSMethod
     public void setJsCallback(JSCallback jsCallback) {
         mJsCallback = jsCallback;
     }
@@ -140,8 +119,14 @@ public class AgoraRtcRoomComponent extends WXComponent<AgoraRtcRoomLayout> {
     }
 
     @JSMethod
-    public void startBroadcast() {
-        getHostView().startBroadcast();
+    public void startBroadcast(JSCallback jsCallback) {
+        boolean ret = checkPermission();
+        if (ret) {
+            getHostView().startBroadcast();
+        }
+        if (jsCallback != null) {
+            jsCallback.invoke(ret ? "1" : "0");
+        }
     }
 
     @JSMethod
